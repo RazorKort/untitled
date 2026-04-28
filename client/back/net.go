@@ -9,9 +9,11 @@ import (
 )
 
 const (
-	MsgTypePing byte = 1
-	MsgTypePong byte = 2
-	MsgTypeText byte = 3
+	MsgTypePing    byte = 1
+	MsgTypePong    byte = 2
+	MsgTypeText    byte = 3
+	MsgTypeID      byte = 4
+	MsgTypeExecute byte = 5
 )
 
 type Packet struct {
@@ -43,15 +45,16 @@ func readPacket(conn net.Conn) (*Packet, error) {
 	}, nil
 }
 
-func WritePacket(conn net.Conn, packet *Packet) error {
+func writePacket(conn net.Conn, packet *Packet) error {
 	dataLen := uint32(len(packet.Data))
 
 	buf := make([]byte, 4+1+dataLen)
 	binary.BigEndian.PutUint32(buf[0:4], dataLen)
 	buf[4] = packet.Type
 	copy(buf[5:], packet.Data)
-
+	conn.SetWriteDeadline(time.Time{})
 	_, err := conn.Write(buf)
+	conn.SetWriteDeadline(time.Time{})
 	return err
 }
 
@@ -63,18 +66,21 @@ func CreateConnection() net.Conn {
 	return conn
 }
 
-func HandleConnection(conn net.Conn) {
-	defer conn.Close()
-	tcpConn := conn.(*net.TCPConn)
+func (c *Client) HandleConnection() {
+	defer c.conn.Close()
+	tcpConn := c.conn.(*net.TCPConn)
 	tcpConn.SetKeepAlive(true)
 	tcpConn.SetKeepAlivePeriod(15 * time.Second)
-	fmt.Println("Подключено к серверу")
 
 	for {
-		packet, err := readPacket(conn)
+		packet, err := readPacket(c.conn)
 		if err != nil {
 			if err != io.EOF {
 				fmt.Println(err)
+				if !c.reconnecting {
+					c.reconnectChan <- struct{}{}
+				}
+				break
 			} else {
 				fmt.Println("EOF")
 			}
@@ -83,7 +89,7 @@ func HandleConnection(conn net.Conn) {
 		switch packet.Type {
 		case MsgTypePing:
 			fmt.Printf("<- PING\n")
-			WritePacket(conn, &Packet{Type: MsgTypePong, Data: nil})
+			c.sendChan <- &Packet{Type: MsgTypePong, Data: nil}
 			fmt.Printf("-> PONG\n")
 
 		case MsgTypePong:
@@ -94,6 +100,30 @@ func HandleConnection(conn net.Conn) {
 
 		default:
 			fmt.Printf("<- Unrecognized type %d, Data: %s\n", packet.Type, string(packet.Data))
+		}
+	}
+}
+
+func (c *Client) HandleSender() {
+	for packet := range c.sendChan {
+		for {
+			conn := c.getConn()
+			if conn == nil {
+				time.Sleep(time.Second)
+				continue
+			}
+
+			err := writePacket(conn, packet)
+			if err != nil {
+				fmt.Println("Отправка не удалась")
+				if !c.reconnecting {
+					c.reconnectChan <- struct{}{}
+				}
+				time.Sleep(5 * time.Second)
+			} else {
+
+				break
+			}
 		}
 	}
 }

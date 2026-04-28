@@ -8,14 +8,19 @@ import (
 )
 
 const (
-	MsgTypePing byte = 1
-	MsgTypePong byte = 2
-	MsgTypeText byte = 3
+	MsgTypePing    byte = 1
+	MsgTypePong    byte = 2
+	MsgTypeText    byte = 3
+	MsgTypeID      byte = 4
+	MsgTypeExecute byte = 4
 )
 
 type Packet struct {
 	Type byte
 	Data []byte
+}
+type Client struct {
+	uuid string
 }
 
 func readPacket(conn net.Conn) (*Packet, error) {
@@ -83,6 +88,10 @@ func handleClient(conn net.Conn) {
 		case MsgTypeText:
 			fmt.Printf("Получен текст: %s\n", string(packet.Data))
 			writePacket(conn, &Packet{Type: MsgTypeText, Data: packet.Data})
+
+		case MsgTypeID:
+			fmt.Printf("Set id of %s to %s\n", conn.RemoteAddr(), packet.Data)
+			//ну когда я придумаю как это сторить, то он реально будет менять
 		default:
 			fmt.Printf("Message type %d\n", packet.Type)
 		}
